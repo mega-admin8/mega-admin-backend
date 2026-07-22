@@ -23,6 +23,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/markets', marketsRoutes);
 app.use('/api/admin/users', require('./routes/adminUsers'));
 app.use('/api/user', require('./routes/user'));
+app.use('/api/funds', require('./routes/funds'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

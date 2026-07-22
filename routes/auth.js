@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
-const auth = require('../middleware/auth');
+const auth = require("../middleware/auth");
 
 // 1. REGISTER: Create user with Phone and M-PIN
 router.post("/register", async (req, res) => {
@@ -29,7 +29,7 @@ router.post("/register", async (req, res) => {
 
     // Insert new user
     const newUser = await pool.query(
-      "INSERT INTO users (full_name, phone_number, mpin_hash) VALUES ($1, $2, $3) RETURNING id, full_name phone_number, wallet_balance",
+      "INSERT INTO users (full_name, phone_number, mpin_hash) VALUES ($1, $2, $3) RETURNING id, full_name, phone_number, wallet_balance",
       [full_name, phone_number, mpinHash],
     );
 
@@ -67,8 +67,9 @@ router.post("/login", async (req, res) => {
     }
 
     if (user.rows[0].is_suspended) {
-      return res.status(403).json({ 
-        error: "Your account has been suspended by the administrator. Please contact support." 
+      return res.status(403).json({
+        error:
+          "Your account has been suspended by the administrator. Please contact support.",
       });
     }
 
@@ -99,7 +100,7 @@ router.post("/login", async (req, res) => {
 });
 
 // --- 1. Route to Update Name Only ---
-router.put("/update-name", async (req, res) => {
+router.put("/update-name", auth, async (req, res) => {
   const { phone_number, full_name } = req.body;
 
   if (!full_name)
@@ -118,7 +119,7 @@ router.put("/update-name", async (req, res) => {
 });
 
 // --- 2. Route to Change M-PIN Only ---
-router.put("/change-mpin", async (req, res) => {
+router.put("/change-mpin", auth, async (req, res) => {
   const { phone_number, old_mpin, new_mpin } = req.body;
 
   if (!old_mpin || !new_mpin)
@@ -132,6 +133,10 @@ router.put("/change-mpin", async (req, res) => {
       "SELECT mpin_hash FROM users WHERE phone_number = $1",
       [phone_number],
     );
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     // Verify old MPIN is correct
     const validPassword = await bcrypt.compare(
@@ -159,13 +164,63 @@ router.put("/change-mpin", async (req, res) => {
 });
 
 // Backend: routes/auth.js (or similar)
-router.get('/me', auth, async (req, res) => {
+router.get("/me", auth, async (req, res) => {
   try {
     // Assume you have middleware that extracts user ID from the JWT token into req.user
-    const result = await pool.query('SELECT id, full_name, wallet_balance FROM users WHERE id = $1', [req.user.id]);
+    const result = await pool.query(
+      "SELECT id, full_name, wallet_balance FROM users WHERE id = $1",
+      [req.user.id],
+    );
     res.json(result.rows[0]);
   } catch (error) {
-    res.status(500).json({ error: 'Server Error' });
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+
+// POST /api/user/push-token
+// router.post("/push-token", auth, async (req, res) => {
+//   const { push_token } = req.body;
+//   const userId = req.user.id;
+
+//   if (!push_token) {
+//     return res.status(400).json({ error: "Push token is required" });
+//   }
+
+//   try {
+//     await pool.query("UPDATE users SET push_token = $1 WHERE id = $2", [
+//       push_token,
+//       userId,
+//     ]);
+//     res.json({ message: "Push token updated successfully." });
+//   } catch (error) {
+//     console.error("Error saving push token:", error);
+//     res.status(500).json({ error: "Server Error" });
+//   }
+// });
+
+// POST /auth/push-token
+router.post('/push-token', auth, async (req, res) => {
+  const { push_token } = req.body;
+  const userId = req.user.id;
+
+  if (!push_token) return res.status(400).json({ error: "Token required" });
+
+  try {
+    // 1. Remove this token from any other user who used this physical device previously
+    await pool.query(
+      "UPDATE users SET push_token = NULL WHERE push_token = $1 AND id != $2",
+      [push_token, userId]
+    );
+
+    // 2. Assign token to the currently logged-in user
+    await pool.query(
+      "UPDATE users SET push_token = $1 WHERE id = $2",
+      [push_token, userId]
+    );
+
+    res.json({ message: "Push token updated successfully." });
+  } catch (error) {
+    res.status(500).json({ error: "Server Error" });
   }
 });
 
