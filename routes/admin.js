@@ -456,8 +456,264 @@ const getFamilyJodiNumbers = (jodiStr) => {
 };
 
 // POST: DECLARE RESULT & DISTRIBUTE WINNINGS
+// router.post("/markets/declare-result", auth, async (req, res) => {
+//   const { market_id, session, winning_number } = req.body; // winning_number is 3-digit Pana (e.g. "138")
+
+//   if (!market_id || !session || !winning_number) {
+//     return res.status(400).json({ error: "Missing required fields" });
+//   }
+
+//   const client = await pool.connect();
+
+//   try {
+//     await client.query("BEGIN");
+
+//     // 1. Fetch live payout rates
+//     const settingsQuery = await client.query(
+//       "SELECT * FROM app_settings WHERE id = 1",
+//     );
+//     const settings = settingsQuery.rows[0] || {};
+
+//     const payoutRates = {
+//       SINGLE_DIGIT: Number(settings.single_digit_rate || 9),
+//       JODI_DIGIT: Number(settings.jodi_digit_rate || 90),
+//       JODI: Number(settings.jodi_digit_rate || 90),
+//       SINGLE_PANNA: Number(settings.single_panna_rate || 140),
+//       DOUBLE_PANNA: Number(settings.double_panna_rate || 280),
+//       TRIPLE_PANNA: Number(settings.triple_panna_rate || 600),
+//       HALF_SANGAM: Number(settings.half_sangam_rate || 1000),
+//       FULL_SANGAM: Number(settings.full_sangam_rate || 10000),
+//       FAMILY_JODI: Number(settings.family_jodi_rate || 90),
+//     };
+
+//     // 2. Prevent Duplicate Declarations for this session today
+//     const checkResult = await client.query(
+//       `
+//       SELECT id FROM results 
+//       WHERE market_id = $1 
+//         AND session = $2 
+//         AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+//     `,
+//       [market_id, session],
+//     );
+
+//     if (checkResult.rows.length > 0) {
+//       await client.query("ROLLBACK");
+//       return res.status(400).json({
+//         error: `The ${session} result for this market has already been declared today!`,
+//       });
+//     }
+
+//     // 3. Derive winning numbers for current session
+//     const currentPana = winning_number;
+//     const currentSingleDigit = deriveSingleDigit(winning_number);
+
+//     let winningConditions = [];
+
+//     // Conditions for current session Pana & Single Digit bets
+//     winningConditions.push(
+//       `(UPPER(session) = UPPER('${session}') AND game_type IN ('SINGLE_PANNA', 'DOUBLE_PANNA', 'TRIPLE_PANNA') AND bid_number = '${currentPana}')`,
+//     );
+//     winningConditions.push(
+//       `(UPPER(session) = UPPER('${session}') AND game_type = 'SINGLE_DIGIT' AND bid_number = '${currentSingleDigit}')`,
+//     );
+
+//     // 4. If CLOSE session, fetch OPEN result to derive Jodi & Sangam
+//     if (session.toUpperCase() === "CLOSE") {
+//       const openResultQuery = await client.query(
+//         `
+//         SELECT winning_number FROM results 
+//         WHERE market_id = $1 
+//           AND UPPER(session) = 'OPEN' 
+//           AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+//         ORDER BY declared_at DESC LIMIT 1
+//       `,
+//         [market_id],
+//       );
+
+//       if (openResultQuery.rows.length > 0) {
+//         const openPana = openResultQuery.rows[0].winning_number;
+//         const openSingleDigit = deriveSingleDigit(openPana);
+
+//         const jodiNumber = `${openSingleDigit}${currentSingleDigit}`;
+//         const familyJodiNumbers = getFamilyJodiNumbers(jodiNumber);
+//         const halfSangam1 = `${openPana}-${currentSingleDigit}`;
+//         const halfSangam2 = `${openSingleDigit}-${currentPana}`;
+//         const fullSangam = `${openPana}-${currentPana}`;
+
+//         // Add Jodi and Sangam winning conditions
+//         winningConditions.push(
+//           `(game_type IN ('JODI', 'JODI_DIGIT') AND bid_number = '${jodiNumber}')`,
+//         );
+//         winningConditions.push(
+//           `(game_type = 'FAMILY_JODI' AND bid_number IN (${familyJodiNumbers.map((n) => `'${n}'`).join(",")}))`,
+//         );
+//         winningConditions.push(
+//           `(game_type = 'HALF_SANGAM' AND bid_number IN ('${halfSangam1}', '${halfSangam2}'))`,
+//         );
+//         winningConditions.push(
+//           `(game_type = 'FULL_SANGAM' AND bid_number = '${fullSangam}')`,
+//         );
+//       }
+//     }
+
+//     const winningWhereClause = winningConditions.join(" OR ");
+
+//     // 5. Update Winning Bids
+//     const winQuery = `
+//       UPDATE bids 
+//       SET status = 'WIN' 
+//       WHERE market_id = $1 
+//         AND status = 'PENDING'
+//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+//         AND (${winningWhereClause})
+//       RETURNING id as bid_id, user_id, amount, game_type
+//     `;
+//     const winningBids = await client.query(winQuery, [market_id]);
+
+//     // 6. Update Losing Bids (Only for session-specific or completed games)
+//     let lossWhereClause = `UPPER(session) = UPPER('${session}')`;
+//     if (session.toUpperCase() === "CLOSE") {
+//       lossWhereClause = `(UPPER(session) = 'CLOSE' OR game_type IN ('JODI', 'JODI_DIGIT', 'FAMILY_JODI', 'HALF_SANGAM', 'FULL_SANGAM'))`;
+//     }
+
+//     const lossQuery = `
+//       UPDATE bids 
+//       SET status = 'LOSS' 
+//       WHERE market_id = $1 
+//         AND status = 'PENDING'
+//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+//         AND ${lossWhereClause}
+//     `;
+//     await client.query(lossQuery, [market_id]);
+
+//     // 7. Credit Wallet Balances & Record Transactions
+//     // for (const bid of winningBids.rows) {
+//     //   const multiplier = payoutRates[bid.game_type] || 1;
+//     //   const winAmount = Number(bid.amount) * multiplier;
+
+//     //   await client.query(`UPDATE bids SET won_amount = $1 WHERE id = $2`, [
+//     //     winAmount,
+//     //     bid.bid_id,
+//     //   ]);
+//     //   await client.query(
+//     //     `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
+//     //     [winAmount, bid.user_id],
+//     //   );
+//     //   await client.query(
+//     //     `INSERT INTO transactions (user_id, amount, type) VALUES ($1, $2, 'WIN')`,
+//     //     [bid.user_id, winAmount],
+//     //   );
+//     // }
+
+//     // 7. Calculate Winnings (Manual Payout Mode)
+//     for (const bid of winningBids.rows) {
+//       const multiplier = payoutRates[bid.game_type] || 1;
+//       const winAmount = Number(bid.amount) * multiplier;
+
+//       // Only stamp the exact won amount into the bid so admins know how much to manually pay
+//       await client.query(`UPDATE bids SET won_amount = $1 WHERE id = $2`, [
+//         winAmount,
+//         bid.bid_id,
+//       ]);
+      
+//       // Removed automatic wallet updates and transaction logging.
+//       // Funds must now be added manually by the admin.
+//     }
+
+//     // 8. Record Result
+//     await client.query(
+//       `
+//       INSERT INTO results (market_id, session, winning_number, declared_at) 
+//       VALUES ($1, $2, $3, NOW())
+//     `,
+//       [market_id, session, currentPana],
+//     );
+
+//     await client.query("COMMIT");
+
+//     res.json({
+//       message: "Result declared successfully!",
+//       totalWinners: winningBids.rows.length,
+//     });
+
+//     // =======================================================
+//     // BROADCAST PUSH NOTIFICATION TO ALL USERS (IN BACKGROUND)
+//     // =======================================================
+//     (async () => {
+//       try {
+//         // 1. Fetch the Market Name
+//         const marketRes = await pool.query(
+//           "SELECT name FROM markets WHERE id = $1",
+//           [market_id],
+//         );
+//         const marketName = marketRes.rows[0]?.name || "Market";
+
+//         // 2. Get all valid push tokens from active, non-suspended users
+//         const tokensRes = await pool.query(`
+//           SELECT DISTINCT push_token FROM users 
+//           WHERE push_token IS NOT NULL 
+//             AND push_token != '' 
+//             AND is_suspended = false 
+//             AND is_deleted = false
+//         `);
+
+//         // Filter and ensure tokens are valid Expo push tokens
+//         const pushTokens = tokensRes.rows
+//           .map((row) => row.push_token)
+//           .filter((token) => Expo.isExpoPushToken(token));
+
+//         if (pushTokens.length === 0) return;
+
+//         // 3. Format Title and Body
+//         const notificationTitle = `${marketName} (${session}) Result Out! 🎉`;
+//         const notificationBody = `Declared Result: ${winning_number} (Single Digit: ${currentSingleDigit})`;
+
+//         // 4. Construct messages for each user
+//         const messages = pushTokens.map((token) => ({
+//           to: token,
+//           sound: "default",
+//           title: notificationTitle,
+//           body: notificationBody,
+//           data: { route: "Dashboard", marketId: market_id },
+//         }));
+
+//         // 5. Send in Chunks using Expo SDK to prevent API rate limits
+//         const chunks = expo.chunkPushNotifications(messages);
+//         for (const chunk of chunks) {
+//           await expo.sendPushNotificationsAsync(chunk);
+//         }
+
+//         // 6. Log to in-app notification center history for all users
+//         await pool.query(
+//           `
+//           INSERT INTO notifications (user_id, title, message)
+//           SELECT id, $1, $2 FROM users WHERE is_suspended = false AND is_deleted = false
+//         `,
+//           [notificationTitle, notificationBody],
+//         );
+
+//         console.log(
+//           `[Push Sent] Broadcasted result to ${pushTokens.length} users.`,
+//         );
+//       } catch (pushError) {
+//         console.error("Broadcast Notification Failed:", pushError);
+//       }
+//     })();
+//   } catch (error) {
+//     await client.query("ROLLBACK");
+//     console.error("Result Declaration Error:", error);
+//     res
+//       .status(500)
+//       .json({ error: "Failed to declare result and update wallets." });
+//   } finally {
+//     client.release();
+//   }
+// });
+
+// POST: DECLARE RESULT ONLY (No automated payouts or bid updates)
 router.post("/markets/declare-result", auth, async (req, res) => {
-  const { market_id, session, winning_number } = req.body; // winning_number is 3-digit Pana (e.g. "138")
+  const { market_id, session, winning_number } = req.body; 
 
   if (!market_id || !session || !winning_number) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -468,25 +724,7 @@ router.post("/markets/declare-result", auth, async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Fetch live payout rates
-    const settingsQuery = await client.query(
-      "SELECT * FROM app_settings WHERE id = 1",
-    );
-    const settings = settingsQuery.rows[0] || {};
-
-    const payoutRates = {
-      SINGLE_DIGIT: Number(settings.single_digit_rate || 9),
-      JODI_DIGIT: Number(settings.jodi_digit_rate || 90),
-      JODI: Number(settings.jodi_digit_rate || 90),
-      SINGLE_PANNA: Number(settings.single_panna_rate || 140),
-      DOUBLE_PANNA: Number(settings.double_panna_rate || 280),
-      TRIPLE_PANNA: Number(settings.triple_panna_rate || 600),
-      HALF_SANGAM: Number(settings.half_sangam_rate || 1000),
-      FULL_SANGAM: Number(settings.full_sangam_rate || 10000),
-      FAMILY_JODI: Number(settings.family_jodi_rate || 90),
-    };
-
-    // 2. Prevent Duplicate Declarations for this session today
+    // 1. Prevent Duplicate Declarations for this session today
     const checkResult = await client.query(
       `
       SELECT id FROM results 
@@ -504,137 +742,35 @@ router.post("/markets/declare-result", auth, async (req, res) => {
       });
     }
 
-    // 3. Derive winning numbers for current session
-    const currentPana = winning_number;
-    const currentSingleDigit = deriveSingleDigit(winning_number);
-
-    let winningConditions = [];
-
-    // Conditions for current session Pana & Single Digit bets
-    winningConditions.push(
-      `(UPPER(session) = UPPER('${session}') AND game_type IN ('SINGLE_PANNA', 'DOUBLE_PANNA', 'TRIPLE_PANNA') AND bid_number = '${currentPana}')`,
-    );
-    winningConditions.push(
-      `(UPPER(session) = UPPER('${session}') AND game_type = 'SINGLE_DIGIT' AND bid_number = '${currentSingleDigit}')`,
-    );
-
-    // 4. If CLOSE session, fetch OPEN result to derive Jodi & Sangam
-    if (session.toUpperCase() === "CLOSE") {
-      const openResultQuery = await client.query(
-        `
-        SELECT winning_number FROM results 
-        WHERE market_id = $1 
-          AND UPPER(session) = 'OPEN' 
-          AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-        ORDER BY declared_at DESC LIMIT 1
-      `,
-        [market_id],
-      );
-
-      if (openResultQuery.rows.length > 0) {
-        const openPana = openResultQuery.rows[0].winning_number;
-        const openSingleDigit = deriveSingleDigit(openPana);
-
-        const jodiNumber = `${openSingleDigit}${currentSingleDigit}`;
-        const familyJodiNumbers = getFamilyJodiNumbers(jodiNumber);
-        const halfSangam1 = `${openPana}-${currentSingleDigit}`;
-        const halfSangam2 = `${openSingleDigit}-${currentPana}`;
-        const fullSangam = `${openPana}-${currentPana}`;
-
-        // Add Jodi and Sangam winning conditions
-        winningConditions.push(
-          `(game_type IN ('JODI', 'JODI_DIGIT') AND bid_number = '${jodiNumber}')`,
-        );
-        winningConditions.push(
-          `(game_type = 'FAMILY_JODI' AND bid_number IN (${familyJodiNumbers.map((n) => `'${n}'`).join(",")}))`,
-        );
-        winningConditions.push(
-          `(game_type = 'HALF_SANGAM' AND bid_number IN ('${halfSangam1}', '${halfSangam2}'))`,
-        );
-        winningConditions.push(
-          `(game_type = 'FULL_SANGAM' AND bid_number = '${fullSangam}')`,
-        );
-      }
-    }
-
-    const winningWhereClause = winningConditions.join(" OR ");
-
-    // 5. Update Winning Bids
-    const winQuery = `
-      UPDATE bids 
-      SET status = 'WIN' 
-      WHERE market_id = $1 
-        AND status = 'PENDING'
-        AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-        AND (${winningWhereClause})
-      RETURNING id as bid_id, user_id, amount, game_type
-    `;
-    const winningBids = await client.query(winQuery, [market_id]);
-
-    // 6. Update Losing Bids (Only for session-specific or completed games)
-    let lossWhereClause = `UPPER(session) = UPPER('${session}')`;
-    if (session.toUpperCase() === "CLOSE") {
-      lossWhereClause = `(UPPER(session) = 'CLOSE' OR game_type IN ('JODI', 'JODI_DIGIT', 'FAMILY_JODI', 'HALF_SANGAM', 'FULL_SANGAM'))`;
-    }
-
-    const lossQuery = `
-      UPDATE bids 
-      SET status = 'LOSS' 
-      WHERE market_id = $1 
-        AND status = 'PENDING'
-        AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-        AND ${lossWhereClause}
-    `;
-    await client.query(lossQuery, [market_id]);
-
-    // 7. Credit Wallet Balances & Record Transactions
-    for (const bid of winningBids.rows) {
-      const multiplier = payoutRates[bid.game_type] || 1;
-      const winAmount = Number(bid.amount) * multiplier;
-
-      await client.query(`UPDATE bids SET won_amount = $1 WHERE id = $2`, [
-        winAmount,
-        bid.bid_id,
-      ]);
-      await client.query(
-        `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
-        [winAmount, bid.user_id],
-      );
-      await client.query(
-        `INSERT INTO transactions (user_id, amount, type) VALUES ($1, $2, 'WIN')`,
-        [bid.user_id, winAmount],
-      );
-    }
-
-    // 8. Record Result
+    // 2. Record Result (Simply save the winning numbers, skip bid evaluation)
     await client.query(
       `
       INSERT INTO results (market_id, session, winning_number, declared_at) 
       VALUES ($1, $2, $3, NOW())
     `,
-      [market_id, session, currentPana],
+      [market_id, session, winning_number],
     );
 
     await client.query("COMMIT");
 
     res.json({
       message: "Result declared successfully!",
-      totalWinners: winningBids.rows.length,
     });
 
     // =======================================================
-    // BROADCAST PUSH NOTIFICATION TO ALL USERS (IN BACKGROUND)
+    // BROADCAST PUSH NOTIFICATION TO ALL USERS
     // =======================================================
     (async () => {
       try {
-        // 1. Fetch the Market Name
+        // Derive single digit strictly for the notification text
+        const currentSingleDigit = deriveSingleDigit(winning_number);
+
         const marketRes = await pool.query(
           "SELECT name FROM markets WHERE id = $1",
           [market_id],
         );
         const marketName = marketRes.rows[0]?.name || "Market";
 
-        // 2. Get all valid push tokens from active, non-suspended users
         const tokensRes = await pool.query(`
           SELECT DISTINCT push_token FROM users 
           WHERE push_token IS NOT NULL 
@@ -643,18 +779,15 @@ router.post("/markets/declare-result", auth, async (req, res) => {
             AND is_deleted = false
         `);
 
-        // Filter and ensure tokens are valid Expo push tokens
         const pushTokens = tokensRes.rows
           .map((row) => row.push_token)
           .filter((token) => Expo.isExpoPushToken(token));
 
         if (pushTokens.length === 0) return;
 
-        // 3. Format Title and Body
         const notificationTitle = `${marketName} (${session}) Result Out! 🎉`;
         const notificationBody = `Declared Result: ${winning_number} (Single Digit: ${currentSingleDigit})`;
 
-        // 4. Construct messages for each user
         const messages = pushTokens.map((token) => ({
           to: token,
           sound: "default",
@@ -663,13 +796,11 @@ router.post("/markets/declare-result", auth, async (req, res) => {
           data: { route: "Dashboard", marketId: market_id },
         }));
 
-        // 5. Send in Chunks using Expo SDK to prevent API rate limits
         const chunks = expo.chunkPushNotifications(messages);
         for (const chunk of chunks) {
           await expo.sendPushNotificationsAsync(chunk);
         }
 
-        // 6. Log to in-app notification center history for all users
         await pool.query(
           `
           INSERT INTO notifications (user_id, title, message)
@@ -678,9 +809,7 @@ router.post("/markets/declare-result", auth, async (req, res) => {
           [notificationTitle, notificationBody],
         );
 
-        console.log(
-          `[Push Sent] Broadcasted result to ${pushTokens.length} users.`,
-        );
+        console.log(`[Push Sent] Broadcasted result to ${pushTokens.length} users.`);
       } catch (pushError) {
         console.error("Broadcast Notification Failed:", pushError);
       }
@@ -688,9 +817,7 @@ router.post("/markets/declare-result", auth, async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Result Declaration Error:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to declare result and update wallets." });
+    res.status(500).json({ error: "Failed to declare result." });
   } finally {
     client.release();
   }
