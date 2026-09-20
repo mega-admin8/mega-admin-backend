@@ -24,6 +24,7 @@ app.use('/api/markets', marketsRoutes);
 app.use('/api/admin/users', require('./routes/adminUsers'));
 app.use('/api/user', require('./routes/user'));
 app.use('/api/funds', require('./routes/funds'));
+app.use('/api/gali-desawar', require('./routes/galiDesawar'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

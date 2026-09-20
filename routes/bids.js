@@ -3,83 +3,6 @@ const router = express.Router();
 const pool = require('../db');
 const auth = require('../middleware/auth');
 
-// router.post('/place-bid', async (req, res) => {
-//     const { user_id, market_id, bid_number, amount } = req.body;
-
-//     const client = await pool.connect(); // Use a single client for the transaction
-
-//     try {
-//         await client.query('BEGIN'); // Start Transaction
-
-//         const user = await client.query("SELECT * FROM users WHERE id = $1", [user_id]);
-//         if (user.rows.length === 0) {
-//             throw new Error("User not found");
-//         }
-
-//         // 1. Check if Market is Open
-//         const marketRes = await client.query(
-//             "SELECT * FROM markets WHERE id = $1 AND is_active = true",
-//             [market_id]
-//         );
-//         const market = marketRes.rows[0];
-        
-//         if (!market) throw new Error("Market not found or inactive");
-
-//         // Simple Time Check logic (You can refine this based on your timezone)
-//         // const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
-//         // Force the time to IST regardless of where the cloud server is physically located
-//         const now = new Date().toLocaleTimeString('en-GB', { 
-//             hour12: false, 
-//             timeZone: 'Asia/Kolkata' 
-//         });
-//         // if (now < market.open_time || now > market.close_time) {
-//         //     throw new Error("Market is currently closed for bidding");
-//         // }
-
-//         // Safe Time Check (handles overnight markets)
-//         const isOpenMarket = market.close_time < market.open_time 
-//             ? (now >= market.open_time || now <= market.close_time) // Overnight logic
-//             : (now >= market.open_time && now <= market.close_time); // Standard logic
-
-//         if (!isOpenMarket) {
-//             throw new Error("Market is currently closed for bidding");
-//         }
-
-//         // 2. Check and Deduct Balance
-//         const userRes = await client.query(
-//             "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2 AND wallet_balance >= $1 RETURNING wallet_balance",
-//             [amount, user_id]
-//         );
-
-//         if (userRes.rows.length === 0) {
-//             throw new Error("Insufficient balance");
-//         }
-
-//         const newBalance = userRes.rows[0].wallet_balance;
-
-//         // 3. Record the Bid
-//         await client.query(
-//             "INSERT INTO bids (user_id, market_id, bid_number, amount) VALUES ($1, $2, $3, $4)",
-//             [user_id, market_id, bid_number, amount]
-//         );
-
-//         // 4. Create Transaction Ledger (Passbook)
-//         await client.query(
-//             "INSERT INTO transactions (user_id, type, amount) VALUES ($1, 'DEBIT', $2)",
-//             [user_id, amount]
-//         );
-
-//         await client.query('COMMIT'); // Save all changes
-//         res.status(200).json({ message: "Bid placed successfully!", current_balance: newBalance });
-
-//     } catch (err) {
-//         await client.query('ROLLBACK'); // Undo everything if any step fails
-//         res.status(400).json({ error: err.message });
-//     } finally {
-//         client.release();
-//     }
-// });
-
 router.post('/place-bid', async (req, res) => {
     // We now expect an array of 'bids' and the 'game_type' from the frontend
     const { user_id, market_id, game_type, bids } = req.body;
@@ -166,38 +89,108 @@ router.post('/place-bid', async (req, res) => {
 });
 
 // GET /api/bids/my-bids
+// router.get('/my-bids', auth, async (req, res) => {
+//     const user_id = req.user.id;
+//     const { startDate, endDate, page = 1, limit = 10 } = req.query;
+//     const offset = (page - 1) * limit;
+
+//     try {
+//         // We append ' 23:59:59' to the end date to include the entire last day
+//         const endOfDay = `${endDate} 23:59:59`;
+
+//         // 1. Get the total count for pagination math
+//         const countQuery = `
+//             SELECT COUNT(*) 
+//             FROM bids 
+//             WHERE user_id = $1 AND placed_at >= $2 AND placed_at <= $3
+//         `;
+//         const countResult = await pool.query(countQuery, [user_id, startDate, endOfDay]);
+//         const totalItems = parseInt(countResult.rows[0].count);
+//         const totalPages = Math.ceil(totalItems / limit);
+
+//         // 2. Get the actual filtered data
+//         const dataQuery = `
+//             SELECT 
+//                 b.id, b.bid_number, b.amount, b.game_type, b.session, b.placed_at, b.status,
+//                 m.name AS market_name
+//             FROM bids b
+//             JOIN markets m ON b.market_id = m.id
+//             WHERE b.user_id = $1 AND b.placed_at >= $2 AND b.placed_at <= $3
+//             ORDER BY b.placed_at DESC
+//             LIMIT $4 OFFSET $5
+//         `;
+//         const result = await pool.query(dataQuery, [user_id, startDate, endOfDay, limit, offset]);
+        
+//         res.json({
+//             bids: result.rows,
+//             totalPages: totalPages === 0 ? 1 : totalPages,
+//             currentPage: parseInt(page)
+//         });
+
+//     } catch (err) {
+//         console.error("Error fetching bids:", err);
+//         res.status(500).json({ error: "Failed to load bid history" });
+//     }
+// });
+
+// GET /api/bids/my-bids (COMBINED MATKA + GALI DESAWAR)
 router.get('/my-bids', auth, async (req, res) => {
     const user_id = req.user.id;
     const { startDate, endDate, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
     try {
-        // We append ' 23:59:59' to the end date to include the entire last day
         const endOfDay = `${endDate} 23:59:59`;
 
-        // 1. Get the total count for pagination math
+        // 1. Get total combined count (using SELECT 1 avoids ID type mismatches)
         const countQuery = `
-            SELECT COUNT(*) 
-            FROM bids 
-            WHERE user_id = $1 AND placed_at >= $2 AND placed_at <= $3
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM bids b
+                WHERE b.user_id = $1 AND b.placed_at >= $2 AND b.placed_at <= $3
+                UNION ALL
+                SELECT 1 FROM gali_desawar_bids gb
+                WHERE gb.user_id = $1 AND gb.created_at >= $2 AND gb.created_at <= $3
+            ) AS total_bids
         `;
         const countResult = await pool.query(countQuery, [user_id, startDate, endOfDay]);
         const totalItems = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalItems / limit);
 
-        // 2. Get the actual filtered data
+        // 2. Fetch combined & paginated bids with explicit text casting for IDs and Strings
         const dataQuery = `
             SELECT 
-                b.id, b.bid_number, b.amount, b.game_type, b.session, b.placed_at, b.status,
-                m.name AS market_name
+                b.id::text AS id, 
+                b.bid_number::text AS bid_number, 
+                b.amount, 
+                b.game_type::text AS game_type, 
+                b.session::text AS session, 
+                b.placed_at, 
+                b.status::text AS status,
+                m.name::text AS market_name
             FROM bids b
             JOIN markets m ON b.market_id = m.id
             WHERE b.user_id = $1 AND b.placed_at >= $2 AND b.placed_at <= $3
-            ORDER BY b.placed_at DESC
+
+            UNION ALL
+
+            SELECT 
+                gb.id::text AS id, 
+                gb.bid_number::text AS bid_number, 
+                gb.amount, 
+                gb.game_type::text AS game_type, 
+                gb.session::text AS session, 
+                gb.created_at AS placed_at, 
+                gb.status::text AS status,
+                gm.name::text AS market_name
+            FROM gali_desawar_bids gb
+            JOIN gali_desawar_markets gm ON gb.market_id = gm.id
+            WHERE gb.user_id = $1 AND gb.created_at >= $2 AND gb.created_at <= $3
+
+            ORDER BY placed_at DESC
             LIMIT $4 OFFSET $5
         `;
         const result = await pool.query(dataQuery, [user_id, startDate, endOfDay, limit, offset]);
-        
+
         res.json({
             bids: result.rows,
             totalPages: totalPages === 0 ? 1 : totalPages,
@@ -205,10 +198,11 @@ router.get('/my-bids', auth, async (req, res) => {
         });
 
     } catch (err) {
-        console.error("Error fetching bids:", err);
+        console.error("Error fetching combined bids:", err);
         res.status(500).json({ error: "Failed to load bid history" });
     }
 });
+
 
 router.get('/win-history', auth, async (req, res) => {
   const userId = req.user.id;

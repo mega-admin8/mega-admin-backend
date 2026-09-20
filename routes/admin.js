@@ -297,133 +297,6 @@ router.get("/dashboard-stats", async (req, res) => {
   }
 });
 
-// POST: DECLARE RESULT & DISTRIBUTE WINNINGS
-// router.post('/markets/declare-result', auth, async (req, res) => {
-//   const { market_id, session, winning_number } = req.body;
-
-//   if (!market_id || !session || !winning_number) {
-//     return res.status(400).json({ error: "Missing required fields" });
-//   }
-
-//   const client = await pool.connect();
-
-//   try {
-//     await client.query('BEGIN');
-
-//     // Fetch the live payout rates from the database
-//     const settingsQuery = await client.query('SELECT * FROM app_settings WHERE id = 1');
-//     const settings = settingsQuery.rows[0];
-
-//     const payoutRates = {
-//       'SINGLE_DIGIT': Number(settings.single_digit_rate),
-//       'JODI_DIGIT': Number(settings.jodi_digit_rate),
-//       'JODI': Number(settings.jodi_digit_rate), // Added fallback just in case it's saved as JODI
-//       'SINGLE_PANNA': Number(settings.single_panna_rate),
-//       'DOUBLE_PANNA': Number(settings.double_panna_rate),
-//       'TRIPLE_PANNA': Number(settings.triple_panna_rate),
-//       'HALF_SANGAM': Number(settings.half_sangam_rate),
-//       'FULL_SANGAM': Number(settings.full_sangam_rate),
-//       'FAMILY_JODI': Number(settings.family_jodi_rate),
-//       'SP_MOTOR': Number(settings.sp_motor_rate),
-//       'DP_MOTOR': Number(settings.dp_motor_rate)
-//     };
-
-//     // Prevent Duplicate Declarations
-//     const checkResult = await client.query(`
-//       SELECT id FROM results
-//       WHERE market_id = $1
-//         AND session = $2
-//         AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//     `, [market_id, session]);
-
-//     if (checkResult.rows.length > 0) {
-//       await client.query('ROLLBACK'); // Cancel the transaction
-//       return res.status(400).json({
-//         error: `The ${session} result for this market has already been declared today!`
-//       });
-//     }
-
-//     // 1. Mark winning bids and get the winners' details
-//     // Assuming 'PENDING' is the default status for a new bid
-//     // 1. Mark winning bids (STRICTLY RESTRICTED TO TODAY)
-//     const winQuery = `
-//       UPDATE bids
-//       SET status = 'WIN'
-//       WHERE market_id = $1
-//         AND UPPER(session) = UPPER($2)
-//         AND bid_number = $3
-//         AND status = 'PENDING'
-//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//       RETURNING id as bid_id, user_id, amount, game_type
-//     `;
-//     const winningBids = await client.query(winQuery, [market_id, session, winning_number]);
-
-//     // 2. Mark all other bids for this market/session as LOSS
-//     // 2. Mark all other bids for this market/session as LOSS (STRICTLY RESTRICTED TO TODAY)
-//     const lossQuery = `
-//       UPDATE bids
-//       SET status = 'LOSS'
-//       WHERE market_id = $1
-//         AND UPPER(session) = UPPER($2)
-//         AND bid_number != $3
-//         AND status = 'PENDING'
-//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//     `;
-//     await client.query(lossQuery, [market_id, session, winning_number]);
-
-//     // 3. Distribute Winnings to Wallets & Create Passbook Entries
-//     for (const bid of winningBids.rows) {
-//       // Typically, Single Digit pays 9x the amount. Adjust this multiplier based on game_type if needed.
-//       // const winAmount = bid.amount * 9;
-//       const multiplier = payoutRates[bid.game_type] || 1;
-//       const winAmount = bid.amount * multiplier;
-
-//       // 1. Stamp the exact won amount into the bid forever
-//       await client.query(`
-//         UPDATE bids
-//         SET won_amount = $1
-//         WHERE id = $2
-//       `, [winAmount, bid.bid_id]);
-
-//       // Add money to user wallet
-//       await client.query(`
-//         UPDATE users
-//         SET wallet_balance = wallet_balance + $1
-//         WHERE id = $2
-//       `, [winAmount, bid.user_id]);
-
-//       // Create ledger entry for the passbook
-//       await client.query(`
-//         INSERT INTO transactions (user_id, amount, type)
-//         VALUES ($1, $2, 'WIN')
-//       `, [bid.user_id, winAmount]);
-//     }
-
-//     // 4. (Optional) Save the result history in a results table if you have one
-//     // await client.query('INSERT INTO results (market_id, session, winning_number, declared_at) VALUES ($1, $2, $3, NOW())', [market_id, session, winning_number]);
-
-//     // Save the result history to the database
-//     await client.query(`
-//       INSERT INTO results (market_id, session, winning_number, declared_at)
-//       VALUES ($1, $2, $3, NOW())
-//     `, [market_id, session, winning_number]);
-
-//     await client.query('COMMIT');
-
-//     res.json({
-//       message: "Result declared successfully!",
-//       totalWinners: winningBids.rows.length
-//     });
-
-//   } catch (error) {
-//     await client.query('ROLLBACK');
-//     console.error("Result Declaration Error:", error);
-//     res.status(500).json({ error: 'Failed to declare result and update wallets.' });
-//   } finally {
-//     client.release();
-//   }
-// });
-
 // Helper: Derive Single Digit from 3-digit Pana
 const deriveSingleDigit = (panaStr) => {
   if (!panaStr || panaStr.length < 3) return panaStr; // Fallback if already single digit
@@ -882,60 +755,99 @@ router.get("/settings", async (req, res) => {
   }
 });
 
-// router.put('/settings', upload.single('qr_image'), async (req, res) => {
-//   const { upi_id, whatsapp_number, min_amount, existing_qr_url } = req.body;
+// router.put("/settings", upload.single("qr_image"), async (req, res) => {
+//   // 1. Extract ALL fields including the 10 new rates
+//   const {
+//     upi_id,
+//     whatsapp_number,
+//     min_amount,
+//     existing_qr_url,
+//     single_digit_rate,
+//     jodi_digit_rate,
+//     single_panna_rate,
+//     double_panna_rate,
+//     triple_panna_rate,
+//     half_sangam_rate,
+//     full_sangam_rate,
+//     family_jodi_rate,
+//     sp_motor_rate,
+//     dp_motor_rate,
+//   } = req.body;
 
 //   try {
 //     let qr_code_url = existing_qr_url;
 
-//     // If a NEW file was uploaded
 //     if (req.file) {
-//        qr_code_url = req.file.path; // The new Cloudinary secure URL
-
-//        // --- NEW LOGIC: Delete the old image from Cloudinary ---
-//        if (existing_qr_url && existing_qr_url.includes('cloudinary.com')) {
-//          try {
-//            // 1. Extract the public_id from the old URL
-//            // Example URL: https://res.cloudinary.com/xyz/image/upload/v123/megaplay_qr_codes/qr123.png
-//            // We need: megaplay_qr_codes/qr123
-//            const urlParts = existing_qr_url.split('/');
-//            const filenameWithExt = urlParts.pop(); // "qr123.png"
-//            const folder = urlParts.pop(); // "megaplay_qr_codes"
-//            const filename = filenameWithExt.split('.')[0]; // "qr123"
-//            const publicId = `${folder}/${filename}`;
-
-//            // 2. Tell Cloudinary to destroy it
-//            await cloudinary.uploader.destroy(publicId);
-//            console.log(`Deleted old QR code: ${publicId}`);
-//          } catch (deleteError) {
-//            // We catch this error separately so a failed deletion
-//            // doesn't stop the new settings from saving!
-//            console.error("Failed to delete old image from Cloudinary:", deleteError);
-//          }
-//        }
+//       qr_code_url = req.file.path;
+//       if (existing_qr_url && existing_qr_url.includes("cloudinary.com")) {
+//         try {
+//           const urlParts = existing_qr_url.split("/");
+//           const filenameWithExt = urlParts.pop();
+//           const folder = urlParts.pop();
+//           const filename = filenameWithExt.split(".")[0];
+//           const publicId = `${folder}/${filename}`;
+//           await cloudinary.uploader.destroy(publicId);
+//         } catch (deleteError) {
+//           console.error(
+//             "Failed to delete old image from Cloudinary:",
+//             deleteError,
+//           );
+//         }
+//       }
 //     }
 
-//     // Update the database with the new URL
-//     await pool.query(`
-//       UPDATE app_settings
-//       SET upi_id = $1, whatsapp_number = $2, qr_code_url = $3, min_amount = $4
+//     // 2. Update the database with the core settings AND the new rates
+//     await pool.query(
+//       `
+//       UPDATE app_settings 
+//       SET 
+//         upi_id = $1, whatsapp_number = $2, qr_code_url = $3, min_amount = $4,
+//         single_digit_rate = $5, jodi_digit_rate = $6, single_panna_rate = $7, 
+//         double_panna_rate = $8, triple_panna_rate = $9, half_sangam_rate = $10, 
+//         full_sangam_rate = $11, family_jodi_rate = $12, sp_motor_rate = $13, 
+//         dp_motor_rate = $14
 //       WHERE id = 1
-//     `, [upi_id, whatsapp_number, qr_code_url, min_amount]);
+//     `,
+//       [
+//         upi_id,
+//         whatsapp_number,
+//         qr_code_url,
+//         min_amount,
+//         single_digit_rate,
+//         jodi_digit_rate,
+//         single_panna_rate,
+//         double_panna_rate,
+//         triple_panna_rate,
+//         half_sangam_rate,
+//         full_sangam_rate,
+//         family_jodi_rate,
+//         sp_motor_rate,
+//         dp_motor_rate,
+//       ],
+//     );
 
-//     res.json({ message: 'Settings updated successfully', new_qr_url: qr_code_url });
+//     res.json({
+//       message: "Settings updated successfully",
+//       new_qr_url: qr_code_url,
+//     });
 //   } catch (error) {
 //     console.error(error);
-//     res.status(500).json({ error: 'Failed to update settings' });
+//     res.status(500).json({ error: "Failed to update settings" });
 //   }
 // });
 
+// GET: Pre-Declaration Liability Dashboard
+
+
+// UPDATE APP SETTINGS
 router.put("/settings", upload.single("qr_image"), async (req, res) => {
-  // 1. Extract ALL fields including the 10 new rates
+  // 1. Extract standard settings + the 3 Gali Desawar rates
   const {
     upi_id,
     whatsapp_number,
     min_amount,
     existing_qr_url,
+    // Standard Market Rates
     single_digit_rate,
     jodi_digit_rate,
     single_panna_rate,
@@ -946,6 +858,10 @@ router.put("/settings", upload.single("qr_image"), async (req, res) => {
     family_jodi_rate,
     sp_motor_rate,
     dp_motor_rate,
+    // 3 Gali Desawar Rates
+    gd_jodi_rate,
+    gd_haruf_andar_rate,
+    gd_haruf_bahar_rate,
   } = req.body;
 
   try {
@@ -964,13 +880,13 @@ router.put("/settings", upload.single("qr_image"), async (req, res) => {
         } catch (deleteError) {
           console.error(
             "Failed to delete old image from Cloudinary:",
-            deleteError,
+            deleteError
           );
         }
       }
     }
 
-    // 2. Update the database with the core settings AND the new rates
+    // 2. Update database record
     await pool.query(
       `
       UPDATE app_settings 
@@ -979,7 +895,8 @@ router.put("/settings", upload.single("qr_image"), async (req, res) => {
         single_digit_rate = $5, jodi_digit_rate = $6, single_panna_rate = $7, 
         double_panna_rate = $8, triple_panna_rate = $9, half_sangam_rate = $10, 
         full_sangam_rate = $11, family_jodi_rate = $12, sp_motor_rate = $13, 
-        dp_motor_rate = $14
+        dp_motor_rate = $14,
+        gd_jodi_rate = $15, gd_haruf_andar_rate = $16, gd_haruf_bahar_rate = $17
       WHERE id = 1
     `,
       [
@@ -997,7 +914,10 @@ router.put("/settings", upload.single("qr_image"), async (req, res) => {
         family_jodi_rate,
         sp_motor_rate,
         dp_motor_rate,
-      ],
+        gd_jodi_rate,
+        gd_haruf_andar_rate,
+        gd_haruf_bahar_rate,
+      ]
     );
 
     res.json({
@@ -1005,12 +925,12 @@ router.put("/settings", upload.single("qr_image"), async (req, res) => {
       new_qr_url: qr_code_url,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating settings:", error);
     res.status(500).json({ error: "Failed to update settings" });
   }
 });
 
-// GET: Pre-Declaration Liability Dashboard
+
 router.get("/markets/:id/liability", async (req, res) => {
   const marketId = req.params.id;
   const session = req.query.session || "OPEN";
