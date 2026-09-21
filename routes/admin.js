@@ -140,10 +140,352 @@ router.get("/all", async (req, res) => {
 });
 
 // GET /api/admin/users/:userId/details
+// router.get("/users/:userId/details", auth, async (req, res) => {
+//   const { userId } = req.params;
+
+//   // Default to page 1, limit 15 items per page
+//   const page = parseInt(req.query.page) || 1;
+//   const limit = parseInt(req.query.limit) || 15;
+//   const offset = (page - 1) * limit;
+
+//   const startDate = req.query.startDate;
+//   const endDate = req.query.endDate;
+
+//   try {
+//     // 1. Get basic user info
+//     const userQuery = `SELECT id, full_name as name, phone_number as mobile, wallet_balance, created_at FROM users WHERE id = $1`;
+//     const userResult = await pool.query(userQuery, [userId]);
+
+//     if (userResult.rows.length === 0) {
+//       return res.status(404).json({ error: "User not found" });
+//     }
+//     const user = userResult.rows[0];
+
+//     // 2. Get TRUE LIFETIME STATS (Optimized SQL instead of Array Math)
+//     const statsQuery = `
+//             SELECT 
+//                 COUNT(*) as total_bids,
+//                 COALESCE(SUM(amount), 0) as total_amount_played,
+//                 COALESCE(SUM(CASE WHEN status = 'WIN' THEN amount * 9 ELSE 0 END), 0) as total_amount_won
+//             FROM bids
+//             WHERE user_id = $1
+//         `;
+//     const statsResult = await pool.query(statsQuery, [userId]);
+//     const stats = statsResult.rows[0];
+
+//     // 3. Build the Paginated & Filtered Bids Query
+//     let bidsQuery = `
+//             SELECT 
+//                 b.id, b.bid_number, b.amount, b.game_type, b.session, b.placed_at, b.status,
+//                 m.name AS market_name
+//             FROM bids b
+//             JOIN markets m ON b.market_id = m.id
+//             WHERE b.user_id = $1
+//         `;
+//     let countQuery = `SELECT COUNT(*) FROM bids b WHERE b.user_id = $1`;
+
+//     const queryParams = [userId];
+//     let paramIndex = 2;
+
+//     // Apply Date Filters if provided
+//     if (startDate && endDate) {
+//       const dateFilter = ` AND b.placed_at >= $${paramIndex} AND b.placed_at <= $${paramIndex + 1}`;
+//       bidsQuery += dateFilter;
+//       countQuery += dateFilter;
+//       queryParams.push(startDate, endDate);
+//       paramIndex += 2;
+//     }
+
+//     // Add Pagination
+//     bidsQuery += ` ORDER BY b.placed_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+//     const paginatedParams = [...queryParams, limit, offset];
+
+//     // Run both queries in parallel for speed
+//     const [bidsResult, countResult] = await Promise.all([
+//       pool.query(bidsQuery, paginatedParams),
+//       pool.query(countQuery, queryParams),
+//     ]);
+
+//     const totalItems = parseInt(countResult.rows[0].count);
+//     const totalPages = Math.ceil(totalItems / limit);
+
+//     res.json({
+//       user,
+//       stats: {
+//         totalBids: parseInt(stats.total_bids),
+//         totalAmountPlayed: Number(stats.total_amount_played),
+//         totalAmountWon: Number(stats.total_amount_won),
+//       },
+//       bids: bidsResult.rows,
+//       pagination: {
+//         currentPage: page,
+//         totalPages: totalPages,
+//         totalItems: totalItems,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("Error fetching user details:", err);
+//     res.status(500).json({ error: "Failed to load user details" });
+//   }
+// });
+
+
+// // GET /api/admin/users/:userId/details
+// router.get("/users/:userId/details", auth, async (req, res) => {
+//   const { userId } = req.params;
+
+//   const page = parseInt(req.query.page) || 1;
+//   const limit = parseInt(req.query.limit) || 15;
+//   const offset = (page - 1) * limit;
+
+//   const startDate = req.query.startDate;
+//   const endDate = req.query.endDate;
+
+//   try {
+//     // 1. Get basic user info (including is_suspended)
+//     const userQuery = `
+//       SELECT id, full_name as name, phone_number as mobile, wallet_balance, is_suspended, created_at 
+//       FROM users 
+//       WHERE id = $1
+//     `;
+//     const userResult = await pool.query(userQuery, [userId]);
+
+//     if (userResult.rows.length === 0) {
+//       return res.status(404).json({ error: "User not found" });
+//     }
+//     const user = userResult.rows[0];
+
+//     // 2. Get TRUE COMBINED LIFETIME STATS (bids + gali_desawar_bids)
+//     const statsQuery = `
+//       SELECT 
+//         (SELECT COUNT(*) FROM bids WHERE user_id = $1) + 
+//         (SELECT COUNT(*) FROM gali_desawar_bids WHERE user_id = $1) AS total_bids,
+
+//         COALESCE((SELECT SUM(amount) FROM bids WHERE user_id = $1), 0) + 
+//         COALESCE((SELECT SUM(amount) FROM gali_desawar_bids WHERE user_id = $1), 0) AS total_amount_played,
+
+//         COALESCE((SELECT SUM(win_amount) FROM bids WHERE user_id = $1 AND status = 'WIN'), 0) + 
+//         COALESCE((SELECT SUM(win_amount) FROM gali_desawar_bids WHERE user_id = $1 AND status = 'WIN'), 0) AS total_amount_won
+//     `;
+//     const statsResult = await pool.query(statsQuery, [userId]);
+//     const stats = statsResult.rows[0];
+
+//     // 3. Paginated & Filtered Combined Bids Query
+//     let dateFilterMain = "";
+//     let dateFilterGD = "";
+//     const queryParams = [userId];
+
+//     if (startDate && endDate) {
+//       dateFilterMain = ` AND b.placed_at >= $2 AND b.placed_at <= $3`;
+//       dateFilterGD = ` AND gb.created_at >= $2 AND gb.created_at <= $3`;
+//       queryParams.push(startDate, endDate);
+//     }
+
+//     const countQuery = `
+//       SELECT COUNT(*) FROM (
+//         SELECT 1 FROM bids b WHERE b.user_id = $1 ${dateFilterMain}
+//         UNION ALL
+//         SELECT 1 FROM gali_desawar_bids gb WHERE gb.user_id = $1 ${dateFilterGD}
+//       ) AS total_bids
+//     `;
+
+//     const limitParamIndex = queryParams.length + 1;
+//     const offsetParamIndex = queryParams.length + 2;
+
+//     const bidsQuery = `
+//       SELECT 
+//         b.id::text AS id, 
+//         b.bid_number::text AS bid_number, 
+//         b.amount, 
+//         b.game_type::text AS game_type, 
+//         b.session::text AS session, 
+//         b.placed_at, 
+//         b.status::text AS status,
+//         m.name::text AS market_name
+//       FROM bids b
+//       JOIN markets m ON b.market_id = m.id
+//       WHERE b.user_id = $1 ${dateFilterMain}
+
+//       UNION ALL
+
+//       SELECT 
+//         gb.id::text AS id, 
+//         gb.bid_number::text AS bid_number, 
+//         gb.amount, 
+//         gb.game_type::text AS game_type, 
+//         COALESCE(gb.session::text, 'N/A') AS session, 
+//         gb.created_at AS placed_at, 
+//         gb.status::text AS status,
+//         gm.name::text AS market_name
+//       FROM gali_desawar_bids gb
+//       JOIN gali_desawar_markets gm ON gb.market_id = gm.id
+//       WHERE gb.user_id = $1 ${dateFilterGD}
+
+//       ORDER BY placed_at DESC
+//       LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+//     `;
+
+//     const paginatedParams = [...queryParams, limit, offset];
+
+//     const [bidsResult, countResult] = await Promise.all([
+//       pool.query(bidsQuery, paginatedParams),
+//       pool.query(countQuery, queryParams),
+//     ]);
+
+//     const totalItems = parseInt(countResult.rows[0].count);
+//     const totalPages = Math.ceil(totalItems / limit);
+
+//     res.json({
+//       user,
+//       stats: {
+//         totalBids: parseInt(stats.total_bids),
+//         totalAmountPlayed: Number(stats.total_amount_played),
+//         totalAmountWon: Number(stats.total_amount_won),
+//       },
+//       bids: bidsResult.rows,
+//       pagination: {
+//         currentPage: page,
+//         totalPages: totalPages === 0 ? 1 : totalPages,
+//         totalItems: totalItems,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("Error fetching user details:", err);
+//     res.status(500).json({ error: "Failed to load user details" });
+//   }
+// });
+
+// GET /api/admin/users/:userId/details
+// router.get("/users/:userId/details", auth, async (req, res) => {
+//   const { userId } = req.params;
+
+//   const page = parseInt(req.query.page) || 1;
+//   const limit = parseInt(req.query.limit) || 15;
+//   const offset = (page - 1) * limit;
+
+//   const startDate = req.query.startDate;
+//   const endDate = req.query.endDate;
+
+//   try {
+//     // 1. Get basic user info (including is_suspended)
+//     const userQuery = `
+//       SELECT id, full_name as name, phone_number as mobile, wallet_balance, is_suspended, created_at 
+//       FROM users 
+//       WHERE id = $1
+//     `;
+//     const userResult = await pool.query(userQuery, [userId]);
+
+//     if (userResult.rows.length === 0) {
+//       return res.status(404).json({ error: "User not found" });
+//     }
+//     const user = userResult.rows[0];
+
+//     // 2. Get COMBINED LIFETIME STATS (Using won_amount column)
+//     const statsQuery = `
+//       SELECT 
+//         (SELECT COUNT(*) FROM bids WHERE user_id = $1) + 
+//         (SELECT COUNT(*) FROM gali_desawar_bids WHERE user_id = $1) AS total_bids,
+
+//         COALESCE((SELECT SUM(amount) FROM bids WHERE user_id = $1), 0) + 
+//         COALESCE((SELECT SUM(amount) FROM gali_desawar_bids WHERE user_id = $1), 0) AS total_amount_played,
+
+//         COALESCE((SELECT SUM(won_amount) FROM bids WHERE user_id = $1 AND status = 'WIN'), 0) + 
+//         COALESCE((SELECT SUM(won_amount) FROM gali_desawar_bids WHERE user_id = $1 AND status = 'WIN'), 0) AS total_amount_won
+//     `;
+//     const statsResult = await pool.query(statsQuery, [userId]);
+//     const stats = statsResult.rows[0];
+
+//     // 3. Paginated & Filtered Combined Bids Query
+//     let dateFilterMain = "";
+//     let dateFilterGD = "";
+//     const queryParams = [userId];
+
+//     if (startDate && endDate) {
+//       dateFilterMain = ` AND b.placed_at >= $2 AND b.placed_at <= $3`;
+//       dateFilterGD = ` AND gb.created_at >= $2 AND gb.created_at <= $3`;
+//       queryParams.push(startDate, endDate);
+//     }
+
+//     const countQuery = `
+//       SELECT COUNT(*) FROM (
+//         SELECT 1 FROM bids b WHERE b.user_id = $1 ${dateFilterMain}
+//         UNION ALL
+//         SELECT 1 FROM gali_desawar_bids gb WHERE gb.user_id = $1 ${dateFilterGD}
+//       ) AS total_bids
+//     `;
+
+//     const limitParamIndex = queryParams.length + 1;
+//     const offsetParamIndex = queryParams.length + 2;
+
+//     const bidsQuery = `
+//       SELECT 
+//         b.id::text AS id, 
+//         b.bid_number::text AS bid_number, 
+//         b.amount, 
+//         b.game_type::text AS game_type, 
+//         b.session::text AS session, 
+//         b.placed_at, 
+//         b.status::text AS status,
+//         m.name::text AS market_name
+//       FROM bids b
+//       JOIN markets m ON b.market_id = m.id
+//       WHERE b.user_id = $1 ${dateFilterMain}
+
+//       UNION ALL
+
+//       SELECT 
+//         gb.id::text AS id, 
+//         gb.bid_number::text AS bid_number, 
+//         gb.amount, 
+//         gb.game_type::text AS game_type, 
+//         COALESCE(gb.session::text, 'N/A') AS session, 
+//         gb.created_at AS placed_at, 
+//         gb.status::text AS status,
+//         gm.name::text AS market_name
+//       FROM gali_desawar_bids gb
+//       JOIN gali_desawar_markets gm ON gb.market_id = gm.id
+//       WHERE gb.user_id = $1 ${dateFilterGD}
+
+//       ORDER BY placed_at DESC
+//       LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+//     `;
+
+//     const paginatedParams = [...queryParams, limit, offset];
+
+//     const [bidsResult, countResult] = await Promise.all([
+//       pool.query(bidsQuery, paginatedParams),
+//       pool.query(countQuery, queryParams),
+//     ]);
+
+//     const totalItems = parseInt(countResult.rows[0].count);
+//     const totalPages = Math.ceil(totalItems / limit);
+
+//     res.json({
+//       user,
+//       stats: {
+//         totalBids: parseInt(stats.total_bids),
+//         totalAmountPlayed: Number(stats.total_amount_played),
+//         totalAmountWon: Number(stats.total_amount_won),
+//       },
+//       bids: bidsResult.rows,
+//       pagination: {
+//         currentPage: page,
+//         totalPages: totalPages === 0 ? 1 : totalPages,
+//         totalItems: totalItems,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("Error fetching user details:", err);
+//     res.status(500).json({ error: "Failed to load user details" });
+//   }
+// });
+
+
+
+// GET /api/admin/users/:userId/details
 router.get("/users/:userId/details", auth, async (req, res) => {
   const { userId } = req.params;
 
-  // Default to page 1, limit 15 items per page
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;
   const offset = (page - 1) * limit;
@@ -152,8 +494,12 @@ router.get("/users/:userId/details", auth, async (req, res) => {
   const endDate = req.query.endDate;
 
   try {
-    // 1. Get basic user info
-    const userQuery = `SELECT id, full_name as name, phone_number as mobile, wallet_balance, created_at FROM users WHERE id = $1`;
+    // 1. Get basic user info (including is_suspended)
+    const userQuery = `
+      SELECT id, full_name as name, phone_number as mobile, wallet_balance, is_suspended, created_at 
+      FROM users 
+      WHERE id = $1
+    `;
     const userResult = await pool.query(userQuery, [userId]);
 
     if (userResult.rows.length === 0) {
@@ -161,46 +507,79 @@ router.get("/users/:userId/details", auth, async (req, res) => {
     }
     const user = userResult.rows[0];
 
-    // 2. Get TRUE LIFETIME STATS (Optimized SQL instead of Array Math)
+    // 2. Get TRUE COMBINED LIFETIME STATS (Dynamically calculating win amounts)
+    // Adjust the 9 (Main) and 90 (Gali Desawar) multipliers if your game rates differ
     const statsQuery = `
-            SELECT 
-                COUNT(*) as total_bids,
-                COALESCE(SUM(amount), 0) as total_amount_played,
-                COALESCE(SUM(CASE WHEN status = 'WIN' THEN amount * 9 ELSE 0 END), 0) as total_amount_won
-            FROM bids
-            WHERE user_id = $1
-        `;
+      SELECT 
+        (SELECT COUNT(*) FROM bids WHERE user_id = $1) + 
+        (SELECT COUNT(*) FROM gali_desawar_bids WHERE user_id = $1) AS total_bids,
+
+        COALESCE((SELECT SUM(amount) FROM bids WHERE user_id = $1), 0) + 
+        COALESCE((SELECT SUM(amount) FROM gali_desawar_bids WHERE user_id = $1), 0) AS total_amount_played,
+
+        COALESCE((SELECT SUM(CASE WHEN status = 'WIN' THEN amount * 9 ELSE 0 END) FROM bids WHERE user_id = $1), 0) + 
+        COALESCE((SELECT SUM(CASE WHEN status = 'WIN' THEN amount * 90 ELSE 0 END) FROM gali_desawar_bids WHERE user_id = $1), 0) AS total_amount_won
+    `;
     const statsResult = await pool.query(statsQuery, [userId]);
     const stats = statsResult.rows[0];
 
-    // 3. Build the Paginated & Filtered Bids Query
-    let bidsQuery = `
-            SELECT 
-                b.id, b.bid_number, b.amount, b.game_type, b.session, b.placed_at, b.status,
-                m.name AS market_name
-            FROM bids b
-            JOIN markets m ON b.market_id = m.id
-            WHERE b.user_id = $1
-        `;
-    let countQuery = `SELECT COUNT(*) FROM bids b WHERE b.user_id = $1`;
-
+    // 3. Paginated & Filtered Combined Bids Query
+    let dateFilterMain = "";
+    let dateFilterGD = "";
     const queryParams = [userId];
-    let paramIndex = 2;
 
-    // Apply Date Filters if provided
     if (startDate && endDate) {
-      const dateFilter = ` AND b.placed_at >= $${paramIndex} AND b.placed_at <= $${paramIndex + 1}`;
-      bidsQuery += dateFilter;
-      countQuery += dateFilter;
+      dateFilterMain = ` AND b.placed_at >= $2 AND b.placed_at <= $3`;
+      dateFilterGD = ` AND gb.created_at >= $2 AND gb.created_at <= $3`;
       queryParams.push(startDate, endDate);
-      paramIndex += 2;
     }
 
-    // Add Pagination
-    bidsQuery += ` ORDER BY b.placed_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    const countQuery = `
+      SELECT COUNT(*) FROM (
+        SELECT 1 FROM bids b WHERE b.user_id = $1 ${dateFilterMain}
+        UNION ALL
+        SELECT 1 FROM gali_desawar_bids gb WHERE gb.user_id = $1 ${dateFilterGD}
+      ) AS total_bids
+    `;
+
+    const limitParamIndex = queryParams.length + 1;
+    const offsetParamIndex = queryParams.length + 2;
+
+    const bidsQuery = `
+      SELECT 
+        b.id::text AS id, 
+        b.bid_number::text AS bid_number, 
+        b.amount, 
+        b.game_type::text AS game_type, 
+        b.session::text AS session, 
+        b.placed_at, 
+        b.status::text AS status,
+        m.name::text AS market_name
+      FROM bids b
+      JOIN markets m ON b.market_id = m.id
+      WHERE b.user_id = $1 ${dateFilterMain}
+
+      UNION ALL
+
+      SELECT 
+        gb.id::text AS id, 
+        gb.bid_number::text AS bid_number, 
+        gb.amount, 
+        gb.game_type::text AS game_type, 
+        COALESCE(gb.session::text, 'N/A') AS session, 
+        gb.created_at AS placed_at, 
+        gb.status::text AS status,
+        gm.name::text AS market_name
+      FROM gali_desawar_bids gb
+      JOIN gali_desawar_markets gm ON gb.market_id = gm.id
+      WHERE gb.user_id = $1 ${dateFilterGD}
+
+      ORDER BY placed_at DESC
+      LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+    `;
+
     const paginatedParams = [...queryParams, limit, offset];
 
-    // Run both queries in parallel for speed
     const [bidsResult, countResult] = await Promise.all([
       pool.query(bidsQuery, paginatedParams),
       pool.query(countQuery, queryParams),
@@ -219,7 +598,7 @@ router.get("/users/:userId/details", auth, async (req, res) => {
       bids: bidsResult.rows,
       pagination: {
         currentPage: page,
-        totalPages: totalPages,
+        totalPages: totalPages === 0 ? 1 : totalPages,
         totalItems: totalItems,
       },
     });
@@ -327,262 +706,6 @@ const getFamilyJodiNumbers = (jodiStr) => {
     `${c2}${c1}`,
   ];
 };
-
-// POST: DECLARE RESULT & DISTRIBUTE WINNINGS
-// router.post("/markets/declare-result", auth, async (req, res) => {
-//   const { market_id, session, winning_number } = req.body; // winning_number is 3-digit Pana (e.g. "138")
-
-//   if (!market_id || !session || !winning_number) {
-//     return res.status(400).json({ error: "Missing required fields" });
-//   }
-
-//   const client = await pool.connect();
-
-//   try {
-//     await client.query("BEGIN");
-
-//     // 1. Fetch live payout rates
-//     const settingsQuery = await client.query(
-//       "SELECT * FROM app_settings WHERE id = 1",
-//     );
-//     const settings = settingsQuery.rows[0] || {};
-
-//     const payoutRates = {
-//       SINGLE_DIGIT: Number(settings.single_digit_rate || 9),
-//       JODI_DIGIT: Number(settings.jodi_digit_rate || 90),
-//       JODI: Number(settings.jodi_digit_rate || 90),
-//       SINGLE_PANNA: Number(settings.single_panna_rate || 140),
-//       DOUBLE_PANNA: Number(settings.double_panna_rate || 280),
-//       TRIPLE_PANNA: Number(settings.triple_panna_rate || 600),
-//       HALF_SANGAM: Number(settings.half_sangam_rate || 1000),
-//       FULL_SANGAM: Number(settings.full_sangam_rate || 10000),
-//       FAMILY_JODI: Number(settings.family_jodi_rate || 90),
-//     };
-
-//     // 2. Prevent Duplicate Declarations for this session today
-//     const checkResult = await client.query(
-//       `
-//       SELECT id FROM results 
-//       WHERE market_id = $1 
-//         AND session = $2 
-//         AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//     `,
-//       [market_id, session],
-//     );
-
-//     if (checkResult.rows.length > 0) {
-//       await client.query("ROLLBACK");
-//       return res.status(400).json({
-//         error: `The ${session} result for this market has already been declared today!`,
-//       });
-//     }
-
-//     // 3. Derive winning numbers for current session
-//     const currentPana = winning_number;
-//     const currentSingleDigit = deriveSingleDigit(winning_number);
-
-//     let winningConditions = [];
-
-//     // Conditions for current session Pana & Single Digit bets
-//     winningConditions.push(
-//       `(UPPER(session) = UPPER('${session}') AND game_type IN ('SINGLE_PANNA', 'DOUBLE_PANNA', 'TRIPLE_PANNA') AND bid_number = '${currentPana}')`,
-//     );
-//     winningConditions.push(
-//       `(UPPER(session) = UPPER('${session}') AND game_type = 'SINGLE_DIGIT' AND bid_number = '${currentSingleDigit}')`,
-//     );
-
-//     // 4. If CLOSE session, fetch OPEN result to derive Jodi & Sangam
-//     if (session.toUpperCase() === "CLOSE") {
-//       const openResultQuery = await client.query(
-//         `
-//         SELECT winning_number FROM results 
-//         WHERE market_id = $1 
-//           AND UPPER(session) = 'OPEN' 
-//           AND DATE(declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//         ORDER BY declared_at DESC LIMIT 1
-//       `,
-//         [market_id],
-//       );
-
-//       if (openResultQuery.rows.length > 0) {
-//         const openPana = openResultQuery.rows[0].winning_number;
-//         const openSingleDigit = deriveSingleDigit(openPana);
-
-//         const jodiNumber = `${openSingleDigit}${currentSingleDigit}`;
-//         const familyJodiNumbers = getFamilyJodiNumbers(jodiNumber);
-//         const halfSangam1 = `${openPana}-${currentSingleDigit}`;
-//         const halfSangam2 = `${openSingleDigit}-${currentPana}`;
-//         const fullSangam = `${openPana}-${currentPana}`;
-
-//         // Add Jodi and Sangam winning conditions
-//         winningConditions.push(
-//           `(game_type IN ('JODI', 'JODI_DIGIT') AND bid_number = '${jodiNumber}')`,
-//         );
-//         winningConditions.push(
-//           `(game_type = 'FAMILY_JODI' AND bid_number IN (${familyJodiNumbers.map((n) => `'${n}'`).join(",")}))`,
-//         );
-//         winningConditions.push(
-//           `(game_type = 'HALF_SANGAM' AND bid_number IN ('${halfSangam1}', '${halfSangam2}'))`,
-//         );
-//         winningConditions.push(
-//           `(game_type = 'FULL_SANGAM' AND bid_number = '${fullSangam}')`,
-//         );
-//       }
-//     }
-
-//     const winningWhereClause = winningConditions.join(" OR ");
-
-//     // 5. Update Winning Bids
-//     const winQuery = `
-//       UPDATE bids 
-//       SET status = 'WIN' 
-//       WHERE market_id = $1 
-//         AND status = 'PENDING'
-//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//         AND (${winningWhereClause})
-//       RETURNING id as bid_id, user_id, amount, game_type
-//     `;
-//     const winningBids = await client.query(winQuery, [market_id]);
-
-//     // 6. Update Losing Bids (Only for session-specific or completed games)
-//     let lossWhereClause = `UPPER(session) = UPPER('${session}')`;
-//     if (session.toUpperCase() === "CLOSE") {
-//       lossWhereClause = `(UPPER(session) = 'CLOSE' OR game_type IN ('JODI', 'JODI_DIGIT', 'FAMILY_JODI', 'HALF_SANGAM', 'FULL_SANGAM'))`;
-//     }
-
-//     const lossQuery = `
-//       UPDATE bids 
-//       SET status = 'LOSS' 
-//       WHERE market_id = $1 
-//         AND status = 'PENDING'
-//         AND DATE(placed_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-//         AND ${lossWhereClause}
-//     `;
-//     await client.query(lossQuery, [market_id]);
-
-//     // 7. Credit Wallet Balances & Record Transactions
-//     // for (const bid of winningBids.rows) {
-//     //   const multiplier = payoutRates[bid.game_type] || 1;
-//     //   const winAmount = Number(bid.amount) * multiplier;
-
-//     //   await client.query(`UPDATE bids SET won_amount = $1 WHERE id = $2`, [
-//     //     winAmount,
-//     //     bid.bid_id,
-//     //   ]);
-//     //   await client.query(
-//     //     `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
-//     //     [winAmount, bid.user_id],
-//     //   );
-//     //   await client.query(
-//     //     `INSERT INTO transactions (user_id, amount, type) VALUES ($1, $2, 'WIN')`,
-//     //     [bid.user_id, winAmount],
-//     //   );
-//     // }
-
-//     // 7. Calculate Winnings (Manual Payout Mode)
-//     for (const bid of winningBids.rows) {
-//       const multiplier = payoutRates[bid.game_type] || 1;
-//       const winAmount = Number(bid.amount) * multiplier;
-
-//       // Only stamp the exact won amount into the bid so admins know how much to manually pay
-//       await client.query(`UPDATE bids SET won_amount = $1 WHERE id = $2`, [
-//         winAmount,
-//         bid.bid_id,
-//       ]);
-      
-//       // Removed automatic wallet updates and transaction logging.
-//       // Funds must now be added manually by the admin.
-//     }
-
-//     // 8. Record Result
-//     await client.query(
-//       `
-//       INSERT INTO results (market_id, session, winning_number, declared_at) 
-//       VALUES ($1, $2, $3, NOW())
-//     `,
-//       [market_id, session, currentPana],
-//     );
-
-//     await client.query("COMMIT");
-
-//     res.json({
-//       message: "Result declared successfully!",
-//       totalWinners: winningBids.rows.length,
-//     });
-
-//     // =======================================================
-//     // BROADCAST PUSH NOTIFICATION TO ALL USERS (IN BACKGROUND)
-//     // =======================================================
-//     (async () => {
-//       try {
-//         // 1. Fetch the Market Name
-//         const marketRes = await pool.query(
-//           "SELECT name FROM markets WHERE id = $1",
-//           [market_id],
-//         );
-//         const marketName = marketRes.rows[0]?.name || "Market";
-
-//         // 2. Get all valid push tokens from active, non-suspended users
-//         const tokensRes = await pool.query(`
-//           SELECT DISTINCT push_token FROM users 
-//           WHERE push_token IS NOT NULL 
-//             AND push_token != '' 
-//             AND is_suspended = false 
-//             AND is_deleted = false
-//         `);
-
-//         // Filter and ensure tokens are valid Expo push tokens
-//         const pushTokens = tokensRes.rows
-//           .map((row) => row.push_token)
-//           .filter((token) => Expo.isExpoPushToken(token));
-
-//         if (pushTokens.length === 0) return;
-
-//         // 3. Format Title and Body
-//         const notificationTitle = `${marketName} (${session}) Result Out! 🎉`;
-//         const notificationBody = `Declared Result: ${winning_number} (Single Digit: ${currentSingleDigit})`;
-
-//         // 4. Construct messages for each user
-//         const messages = pushTokens.map((token) => ({
-//           to: token,
-//           sound: "default",
-//           title: notificationTitle,
-//           body: notificationBody,
-//           data: { route: "Dashboard", marketId: market_id },
-//         }));
-
-//         // 5. Send in Chunks using Expo SDK to prevent API rate limits
-//         const chunks = expo.chunkPushNotifications(messages);
-//         for (const chunk of chunks) {
-//           await expo.sendPushNotificationsAsync(chunk);
-//         }
-
-//         // 6. Log to in-app notification center history for all users
-//         await pool.query(
-//           `
-//           INSERT INTO notifications (user_id, title, message)
-//           SELECT id, $1, $2 FROM users WHERE is_suspended = false AND is_deleted = false
-//         `,
-//           [notificationTitle, notificationBody],
-//         );
-
-//         console.log(
-//           `[Push Sent] Broadcasted result to ${pushTokens.length} users.`,
-//         );
-//       } catch (pushError) {
-//         console.error("Broadcast Notification Failed:", pushError);
-//       }
-//     })();
-//   } catch (error) {
-//     await client.query("ROLLBACK");
-//     console.error("Result Declaration Error:", error);
-//     res
-//       .status(500)
-//       .json({ error: "Failed to declare result and update wallets." });
-//   } finally {
-//     client.release();
-//   }
-// });
 
 // POST: DECLARE RESULT ONLY (No automated payouts or bid updates)
 router.post("/markets/declare-result", auth, async (req, res) => {
@@ -754,90 +877,6 @@ router.get("/settings", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
-
-// router.put("/settings", upload.single("qr_image"), async (req, res) => {
-//   // 1. Extract ALL fields including the 10 new rates
-//   const {
-//     upi_id,
-//     whatsapp_number,
-//     min_amount,
-//     existing_qr_url,
-//     single_digit_rate,
-//     jodi_digit_rate,
-//     single_panna_rate,
-//     double_panna_rate,
-//     triple_panna_rate,
-//     half_sangam_rate,
-//     full_sangam_rate,
-//     family_jodi_rate,
-//     sp_motor_rate,
-//     dp_motor_rate,
-//   } = req.body;
-
-//   try {
-//     let qr_code_url = existing_qr_url;
-
-//     if (req.file) {
-//       qr_code_url = req.file.path;
-//       if (existing_qr_url && existing_qr_url.includes("cloudinary.com")) {
-//         try {
-//           const urlParts = existing_qr_url.split("/");
-//           const filenameWithExt = urlParts.pop();
-//           const folder = urlParts.pop();
-//           const filename = filenameWithExt.split(".")[0];
-//           const publicId = `${folder}/${filename}`;
-//           await cloudinary.uploader.destroy(publicId);
-//         } catch (deleteError) {
-//           console.error(
-//             "Failed to delete old image from Cloudinary:",
-//             deleteError,
-//           );
-//         }
-//       }
-//     }
-
-//     // 2. Update the database with the core settings AND the new rates
-//     await pool.query(
-//       `
-//       UPDATE app_settings 
-//       SET 
-//         upi_id = $1, whatsapp_number = $2, qr_code_url = $3, min_amount = $4,
-//         single_digit_rate = $5, jodi_digit_rate = $6, single_panna_rate = $7, 
-//         double_panna_rate = $8, triple_panna_rate = $9, half_sangam_rate = $10, 
-//         full_sangam_rate = $11, family_jodi_rate = $12, sp_motor_rate = $13, 
-//         dp_motor_rate = $14
-//       WHERE id = 1
-//     `,
-//       [
-//         upi_id,
-//         whatsapp_number,
-//         qr_code_url,
-//         min_amount,
-//         single_digit_rate,
-//         jodi_digit_rate,
-//         single_panna_rate,
-//         double_panna_rate,
-//         triple_panna_rate,
-//         half_sangam_rate,
-//         full_sangam_rate,
-//         family_jodi_rate,
-//         sp_motor_rate,
-//         dp_motor_rate,
-//       ],
-//     );
-
-//     res.json({
-//       message: "Settings updated successfully",
-//       new_qr_url: qr_code_url,
-//     });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: "Failed to update settings" });
-//   }
-// });
-
-// GET: Pre-Declaration Liability Dashboard
-
 
 // UPDATE APP SETTINGS
 router.put("/settings", upload.single("qr_image"), async (req, res) => {

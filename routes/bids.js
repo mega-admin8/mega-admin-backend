@@ -88,51 +88,6 @@ router.post('/place-bid', async (req, res) => {
     }
 });
 
-// GET /api/bids/my-bids
-// router.get('/my-bids', auth, async (req, res) => {
-//     const user_id = req.user.id;
-//     const { startDate, endDate, page = 1, limit = 10 } = req.query;
-//     const offset = (page - 1) * limit;
-
-//     try {
-//         // We append ' 23:59:59' to the end date to include the entire last day
-//         const endOfDay = `${endDate} 23:59:59`;
-
-//         // 1. Get the total count for pagination math
-//         const countQuery = `
-//             SELECT COUNT(*) 
-//             FROM bids 
-//             WHERE user_id = $1 AND placed_at >= $2 AND placed_at <= $3
-//         `;
-//         const countResult = await pool.query(countQuery, [user_id, startDate, endOfDay]);
-//         const totalItems = parseInt(countResult.rows[0].count);
-//         const totalPages = Math.ceil(totalItems / limit);
-
-//         // 2. Get the actual filtered data
-//         const dataQuery = `
-//             SELECT 
-//                 b.id, b.bid_number, b.amount, b.game_type, b.session, b.placed_at, b.status,
-//                 m.name AS market_name
-//             FROM bids b
-//             JOIN markets m ON b.market_id = m.id
-//             WHERE b.user_id = $1 AND b.placed_at >= $2 AND b.placed_at <= $3
-//             ORDER BY b.placed_at DESC
-//             LIMIT $4 OFFSET $5
-//         `;
-//         const result = await pool.query(dataQuery, [user_id, startDate, endOfDay, limit, offset]);
-        
-//         res.json({
-//             bids: result.rows,
-//             totalPages: totalPages === 0 ? 1 : totalPages,
-//             currentPage: parseInt(page)
-//         });
-
-//     } catch (err) {
-//         console.error("Error fetching bids:", err);
-//         res.status(500).json({ error: "Failed to load bid history" });
-//     }
-// });
-
 // GET /api/bids/my-bids (COMBINED MATKA + GALI DESAWAR)
 router.get('/my-bids', auth, async (req, res) => {
     const user_id = req.user.id;

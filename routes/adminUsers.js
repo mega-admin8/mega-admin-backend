@@ -2,20 +2,6 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db'); 
 
-// // 1. GET ALL USERS
-// router.get('/all', async (req, res) => {
-//   try {
-//     const result = await pool.query(
-//       'SELECT id, full_name, phone_number, wallet_balance, role FROM users WHERE role != $1 ORDER BY id DESC',
-//       ['admin']
-//     );
-//     res.json(result.rows);
-//   } catch (error) {
-//     res.status(500).json({ error: 'Internal Server Error' });
-//   }
-// });
-
-
 // 1. GET ALL USERS (Paginated & Searched)
 router.get('/all', async (req, res) => {
   try {
