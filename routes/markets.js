@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const auth = require('../middleware/auth')
 
 // Helper function to derive Modulo 10 single digit from a 3-digit Pana
 const getMod10Digit = (panaStr) => {
@@ -9,7 +10,7 @@ const getMod10Digit = (panaStr) => {
   return (sum % 10).toString();
 };
 
-// 1. GET ALL MARKETS WITH TODAY'S RESULTS & FORMATTED DISPLAY
+// 1. GET ALL MARKETS WITH TODAY'S RESULTS & FORMATTED DISPLAY (Excludes Soft-Deleted & Inactive)
 router.get('/', async (req, res) => {
   try {
     const query = `
@@ -30,6 +31,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN results r_close ON r_close.market_id = m.id 
         AND UPPER(r_close.session) = 'CLOSE' 
         AND DATE(r_close.declared_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+      WHERE (m.is_deleted = false OR m.is_deleted IS NULL)
+        AND m.is_active = true
       ORDER BY m.id ASC;
     `;
 
@@ -65,6 +68,7 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: "Server Error" });
   }
 });
+
 
 // 2. ADD A NEW MARKET
 router.post('/add', async (req, res) => {
@@ -119,23 +123,27 @@ router.put('/update/:id', async (req, res) => {
   }
 });
 
-// 4. DELETE A MARKET
-router.delete('/delete/:id', async (req, res) => {
+// DELETE (SOFT DELETE) A MARKET
+router.delete('/delete/:id', auth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = await pool.query('DELETE FROM markets WHERE id = $1 RETURNING *', [id]);
-    
+    const result = await pool.query(
+      'UPDATE markets SET is_deleted = true, is_active = false WHERE id = $1 RETURNING *',
+      [id]
+    );
+
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Market not found' });
     }
-    
-    res.json({ message: 'Market deleted successfully' });
+
+    res.json({ message: 'Market disabled and hidden successfully' });
   } catch (error) {
-    console.error('Error deleting market:', error);
+    console.error('Error soft-deleting market:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
 
 // 5. TOGGLE MARKET STATUS (PAUSE/UNPAUSE)
 router.patch('/toggle-status/:id', async (req, res) => {
