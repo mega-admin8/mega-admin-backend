@@ -204,7 +204,7 @@ router.get("/users/:userId/details", auth, async (req, res) => {
     const limitParamIndex = queryParams.length + 1;
     const offsetParamIndex = queryParams.length + 2;
 
-    const bidsQuery = `
+   const bidsQuery = `
       SELECT 
         b.id::text AS id, 
         b.bid_number::text AS bid_number, 
@@ -213,9 +213,12 @@ router.get("/users/:userId/details", auth, async (req, res) => {
         b.session::text AS session, 
         b.placed_at, 
         b.status::text AS status,
-        m.name::text AS market_name
+        COALESCE(
+          CASE WHEN m.is_deleted = true THEN m.name || ' (Deleted)' ELSE m.name END, 
+          'Deleted Market'
+        )::text AS market_name
       FROM bids b
-      LEFT JOIN markets m ON b.market_id = m.id
+      LEFT JOIN markets m ON b.market_id::text = m.id::text
       WHERE b.user_id = $1 ${dateFilterMain}
 
       UNION ALL
@@ -228,9 +231,12 @@ router.get("/users/:userId/details", auth, async (req, res) => {
         COALESCE(gb.session::text, 'N/A') AS session, 
         gb.created_at AS placed_at, 
         gb.status::text AS status,
-        gm.name::text AS market_name
+        COALESCE(
+          CASE WHEN gm.is_deleted = true THEN gm.name || ' (Deleted)' ELSE gm.name END, 
+          'Deleted Market'
+        )::text AS market_name
       FROM gali_desawar_bids gb
-      LEFT JOIN gali_desawar_markets gm ON gb.market_id = gm.id
+      LEFT JOIN gali_desawar_markets gm ON gb.market_id::text = gm.id::text
       WHERE gb.user_id = $1 ${dateFilterGD}
 
       ORDER BY placed_at DESC
